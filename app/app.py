@@ -11,9 +11,14 @@ from flask import (
 # ======================================
 # Paths, defaults, utils
 # ======================================
-BASE_DIR       = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR       = os.path.join(BASE_DIR, "data")
-FIRMWARE_DIR   = os.path.join(BASE_DIR, "firmware")
+
+
+alias = "coldvault_manager"
+HOME_DIR = os.path.expanduser("~")
+FILES_PATH = os.path.join(HOME_DIR, "script_files", alias)
+
+DATA_DIR       = os.path.join(FILES_PATH, "data")
+FIRMWARE_DIR   = os.path.join(FILES_PATH, "firmware")
 
 EVENTS_JSON    = os.path.join(DATA_DIR, "events.json")   # list[dict]
 DEVICES_JSON   = os.path.join(DATA_DIR, "devices.json")  # dict[serial] -> info
