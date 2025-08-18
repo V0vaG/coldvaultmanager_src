@@ -3,6 +3,7 @@
 
 import os, re, json, threading
 from datetime import datetime
+from werkzeug.utils import secure_filename
 from flask import (
     Flask, request, send_file, redirect, url_for,
     render_template, jsonify, abort, flash
@@ -221,9 +222,42 @@ def home():
     )
 
 # -------- Firmware list UI --------
-@app.get("/firmware")
+@app.route("/firmware", methods=["GET", "POST"])
 def firmware_list():
     s = load_settings()
+
+    # ---- Upload handler ----
+    if request.method == "POST":
+        f = request.files.get("firmware_file")
+        if not f or not f.filename:
+            flash("לא נבחר קובץ.", "error")
+            return redirect(url_for("firmware_list"))
+
+        # secure the name and validate pattern
+        orig_name = secure_filename(f.filename)
+        m = SEMVER_RE.match(orig_name)
+        if not m:
+            flash("שם הקובץ חייב להיות בפורמט ColdVault_X.Y.Z.ino.bin", "error")
+            return redirect(url_for("firmware_list"))
+
+        dest_dir = s["firmware_dir"]
+        os.makedirs(dest_dir, exist_ok=True)
+        dest_path = os.path.join(dest_dir, orig_name)
+
+        # If a file with the same name exists, append a timestamp before saving
+        if os.path.exists(dest_path):
+            name, ext = os.path.splitext(orig_name)
+            ts = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+            new_name = f"{name}_{ts}{ext}"
+            dest_path = os.path.join(dest_dir, new_name)
+            flash(f"קובץ בשם זה כבר קיים. נשמר בשם: {new_name}", "warn")
+        else:
+            flash("הקובץ הועלה בהצלחה!", "success")
+
+        f.save(dest_path)
+        return redirect(url_for("firmware_list"))
+
+    # ---- List files (GET) ----
     items = []
     for (fn, ver) in find_all_firmwares(s["firmware_dir"]):
         p = os.path.join(s["firmware_dir"], fn)
@@ -236,7 +270,14 @@ def firmware_list():
             "mtime": datetime.utcfromtimestamp(st.st_mtime).isoformat() + "Z"
         })
     items.sort(key=lambda x: tuple(map(int, x["version"].split("."))), reverse=True)
-    return render_template("firmware.html", title="Firmware Files", items=items, fw_dir=s["firmware_dir"], datetime=datetime)
+
+    return render_template(
+        "firmware.html",
+        title="Firmware Files",
+        items=items,
+        fw_dir=s["firmware_dir"],
+        datetime=datetime
+    )
 
 # -------- Groups management --------
 @app.route("/groups", methods=["GET", "POST"])

@@ -1,9 +1,28 @@
 {% extends "layout.html" %}
 {% block content %}
   <h2>קבצי גרסה</h2>
-  <div class="card">
+
+  <div class="card" style="display:flex;align-items:center;gap:12px;justify-content:space-between;flex-wrap:wrap">
     <div>תיקייה: <code>{{ fw_dir }}</code></div>
+
+    <!-- Single upload button -->
+    <form id="upload-form" method="post" enctype="multipart/form-data">
+      <input id="fw-input" name="firmware_file" type="file" accept=".bin" style="display:none" />
+      <button type="button" class="btn btn-primary" onclick="document.getElementById('fw-input').click()">
+        העלה קובץ גרסה
+      </button>
+    </form>
   </div>
+
+  <script>
+    // Auto-submit when file chosen
+    const fwInput = document.getElementById('fw-input');
+    fwInput.addEventListener('change', function () {
+      if (fwInput.files && fwInput.files.length > 0) {
+        document.getElementById('upload-form').submit();
+      }
+    });
+  </script>
 
   <div class="card">
     {% if items %}
