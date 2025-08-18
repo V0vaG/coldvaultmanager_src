@@ -1,0 +1,37 @@
+{% extends "layout.html" %}
+{% block content %}
+  <h2>הגדרות</h2>
+  <form method="post" class="card">
+    <div>
+      <label>תיקיית קבצי גרסה:
+        <input name="firmware_dir" type="text" value="{{ s.firmware_dir }}" style="width:100%">
+      </label>
+    </div>
+    <div>
+      <label>אסטרטגיה כללית:
+        <select name="default_strategy">
+          <option value="latest" {{ 'selected' if s.default_strategy=='latest' else '' }}>האחרון</option>
+          <option value="pinned" {{ 'selected' if s.default_strategy=='pinned' else '' }}>נעוץ (קובץ קבוע)</option>
+        </select>
+      </label>
+    </div>
+    <div>
+      <label>קובץ ברירת מחדל (כשאסטרטגיה נעוצה):
+        <select name="default_firmware">
+          <option value="">—</option>
+          {% for f in fw_files %}
+            <option value="{{ f }}" {{ 'selected' if f==s.default_firmware else '' }}>{{ f }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+    <div>
+      <label>מקס' אירועים לשמירה:
+        <input name="events_cap" type="number" min="100" step="100" value="{{ s.events_cap }}">
+      </label>
+    </div>
+    <div style="margin-top:8px">
+      <button class="btn btn-primary" type="submit">שמור</button>
+    </div>
+  </form>
+{% endblock %}

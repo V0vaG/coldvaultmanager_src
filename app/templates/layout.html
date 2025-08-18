@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <title>{{ title or "OTA Server" }}</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    body {font-family: system-ui, Arial, sans-serif; margin: 0; color: #111}
+    header {display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid #eee;background:#fafafa}
+    header a {text-decoration:none;color:#111;padding:6px 10px;border-radius:8px}
+    header a.active {background:#111;color:#fff}
+    main {padding:16px;max-width:1100px;margin:0 auto}
+    table {border-collapse: collapse; width: 100%;}
+    th, td {border:1px solid #ddd; padding:8px; text-align:right}
+    th {background:#f5f5f5}
+    .card {border:1px solid #eee;border-radius:12px;padding:12px 16px;margin:12px 0;background:#fff}
+    .row {display:grid; gap:12px}
+    @media(min-width:800px){ .row{grid-template-columns:1fr 1fr} }
+    .ok{color:#0a0}
+    .warn{color:#a60}
+    .err{color:#a00}
+    .muted{color:#666}
+    .btn{display:inline-block;padding:6px 10px;border:1px solid #ddd;border-radius:8px;background:#f7f7f7;cursor:pointer;text-decoration:none;color:#111}
+    .btn-primary{background:#111;color:#fff;border-color:#111}
+    form.inline > * {margin-inline:4px}
+    .flash{background:#ffe8a1;border:1px solid #e5c66b;padding:6px 10px;border-radius:8px;margin:8px 0}
+    footer{padding:20px;color:#777;text-align:center}
+    input,select{padding:6px 8px;border:1px solid #ccc;border-radius:8px}
+    code{background:#f6f6f6;border:1px solid #eee;border-radius:6px;padding:2px 4px}
+  </style>
+</head>
+<body>
+  <header>
+    {% set here = request.path %}
+    <a href="{{ url_for('home') }}" class="{{ 'active' if here=='/' else '' }}">דשבורד</a>
+    <a href="{{ url_for('firmware_list') }}" class="{{ 'active' if here.startswith('/firmware') and here != '/firmware.php' else '' }}">קבצי גרסה</a>
+    <a href="{{ url_for('groups_page') }}" class="{{ 'active' if here.startswith('/groups') else '' }}">קבוצות</a>
+    <a href="{{ url_for('events_page') }}" class="{{ 'active' if here.startswith('/events') else '' }}">אירועים</a>
+    <a href="{{ url_for('settings_page') }}" class="{{ 'active' if here.startswith('/settings') else '' }}">הגדרות</a>
+    <div style="flex:1"></div>
+    <span class="muted">OTA Server</span>
+  </header>
+
+  <main>
+    {% with messages = get_flashed_messages() %}
+      {% if messages %}
+        {% for m in messages %}<div class="flash">{{ m }}</div>{% endfor %}
+      {% endif %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer>© {{ datetime.utcnow().year }} OTA Demo</footer>
+</body>
+</html>

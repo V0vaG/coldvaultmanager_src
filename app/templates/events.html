@@ -1,0 +1,28 @@
+{% extends "layout.html" %}
+{% block content %}
+  <h2>אירועים</h2>
+  <div class="card">
+    {% if events %}
+      <table>
+        <thead><tr>
+          <th>זמן (UTC)</th><th>IP</th><th>Serial</th><th>Device ID</th><th>קובץ</th><th>גרסה</th><th>User-Agent</th>
+        </tr></thead>
+        <tbody>
+          {% for e in events|reverse %}
+            <tr>
+              <td class="muted">{{ e.ts }}</td>
+              <td>{{ e.ip }}</td>
+              <td><code>{{ e.serial }}</code></td>
+              <td>{{ e.device_id }}</td>
+              <td>{{ e.filename }}</td>
+              <td>{{ e.version }}</td>
+              <td class="muted">{{ e.ua }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <div class="muted">אין אירועים עדיין.</div>
+    {% endif %}
+  </div>
+{% endblock %}

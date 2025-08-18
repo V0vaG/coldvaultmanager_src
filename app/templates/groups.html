@@ -1,0 +1,80 @@
+{% extends "layout.html" %}
+{% block content %}
+  <h2>קבוצות</h2>
+
+  <div class="card">
+    <h3>יצירת קבוצה</h3>
+    <form method="post" class="inline">
+      <input type="hidden" name="action" value="add_group">
+      <input name="group" placeholder="שם קבוצה" required>
+      <select name="firmware_file">
+        <option value="">— בחר קובץ —</option>
+        {% for f in fw_files %}
+          <option value="{{ f }}">{{ f }}</option>
+        {% endfor %}
+      </select>
+      <input name="signature" placeholder="חתימה (למשל A/B)" style="width:8ch">
+      <input name="note" placeholder="הערה">
+      <button class="btn btn-primary">הוסף</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h3>שיוך מכשיר לקבוצה</h3>
+    <form method="post" class="inline">
+      <input type="hidden" name="action" value="assign_device">
+      <input name="serial" placeholder="Serial" required>
+      <select name="group" required>
+        <option value="">— בחר קבוצה —</option>
+        {% for g in groups.keys() %}
+          <option value="{{ g }}">{{ g }}</option>
+        {% endfor %}
+      </select>
+      <button class="btn">שייך</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h3>קבוצות קיימות</h3>
+    {% if groups %}
+      <table>
+        <thead><tr>
+          <th>שם קבוצה</th><th>קובץ גרסה</th><th>חתימה</th><th>הערה</th><th>עדכון</th><th>מחיקה</th>
+        </tr></thead>
+        <tbody>
+          {% for name, g in groups.items() %}
+            <tr>
+              <td><b>{{ name }}</b></td>
+              <td><code>{{ g.get('firmware_file','') or '—' }}</code></td>
+              <td>{{ g.get('signature','') }}</td>
+              <td>{{ g.get('note','') }}</td>
+              <td>
+                <form method="post" class="inline">
+                  <input type="hidden" name="action" value="update_group">
+                  <input type="hidden" name="group" value="{{ name }}">
+                  <select name="firmware_file" required>
+                    {% for f in fw_files %}
+                      <option value="{{ f }}" {{ 'selected' if f == g.get('firmware_file') else '' }}>{{ f }}</option>
+                    {% endfor %}
+                  </select>
+                  <input name="signature" value="{{ g.get('signature','') }}" placeholder="חתימה" style="width:8ch">
+                  <input name="note" value="{{ g.get('note','') }}" placeholder="הערה">
+                  <button class="btn">שמור</button>
+                </form>
+              </td>
+              <td>
+                <form method="post" class="inline" onsubmit="return confirm('למחוק את הקבוצה {{name}}?')">
+                  <input type="hidden" name="action" value="delete_group">
+                  <input type="hidden" name="group" value="{{ name }}">
+                  <button class="btn err">מחק</button>
+                </form>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <div class="muted">אין קבוצות עדיין.</div>
+    {% endif %}
+  </div>
+{% endblock %}

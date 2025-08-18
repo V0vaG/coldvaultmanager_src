@@ -1,0 +1,71 @@
+{% extends "layout.html" %}
+{% block content %}
+  <h2>דשבורד</h2>
+
+  <div class="row">
+    <div class="card">
+      <h3>גרסת ברירת מחדל</h3>
+      {% if latest %}
+        <div>קובץ אחרון בתיקייה: <b>{{ latest.filename }}</b></div>
+        <div>גרסה: <b>{{ latest.version }}</b></div>
+      {% else %}
+        <div class="warn">לא נמצאו קבצי ColdVault_*.ino.bin</div>
+      {% endif %}
+    </div>
+    <div class="card">
+      <h3>סיכום מהיר</h3>
+      <div>מס' מכשירים מוכרים: <b>{{ devices|length }}</b></div>
+      <div>מס' אירועים: <b>{{ events|length }}</b></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>אירועים אחרונים</h3>
+    {% if events %}
+      <table>
+        <thead><tr>
+          <th>זמן (UTC)</th><th>IP</th><th>Serial</th><th>Device ID</th><th>קובץ</th><th>גרסה</th>
+        </tr></thead>
+        <tbody>
+        {% for e in events[-20:]|reverse %}
+          <tr>
+            <td class="muted">{{ e.ts }}</td>
+            <td>{{ e.ip }}</td>
+            <td><code>{{ e.serial }}</code></td>
+            <td>{{ e.device_id }}</td>
+            <td>{{ e.filename }}</td>
+            <td>{{ e.version }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <div class="muted">אין אירועים עדיין.</div>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h3>מכשירים</h3>
+    {% if devices %}
+      <table>
+        <thead><tr>
+          <th>Serial</th><th>Device ID</th><th>קבוצה</th><th>גרסה אחרונה</th><th>קובץ אחרון</th><th>נראה לאחרונה</th>
+        </tr></thead>
+        <tbody>
+          {% for serial, info in devices.items() %}
+            <tr>
+              <td><code>{{ serial }}</code></td>
+              <td>{{ info.get('device_id','') }}</td>
+              <td>{{ info.get('group','') or '—' }}</td>
+              <td>{{ info.get('last_version','') }}</td>
+              <td>{{ info.get('last_filename','') }}</td>
+              <td class="muted">{{ info.get('last_seen','') }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <div class="muted">אין מכשירים מוכרים עדיין.</div>
+    {% endif %}
+  </div>
+{% endblock %}

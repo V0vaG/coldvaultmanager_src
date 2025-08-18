@@ -1,0 +1,29 @@
+{% extends "layout.html" %}
+{% block content %}
+  <h2>קבצי גרסה</h2>
+  <div class="card">
+    <div>תיקייה: <code>{{ fw_dir }}</code></div>
+  </div>
+
+  <div class="card">
+    {% if items %}
+      <table>
+        <thead><tr>
+          <th>קובץ</th><th>גרסה</th><th>גודל</th><th>עודכן</th>
+        </tr></thead>
+        <tbody>
+          {% for it in items %}
+            <tr>
+              <td>{{ it.filename }}</td>
+              <td>{{ it.version }}</td>
+              <td>{{ it.size_h }}</td>
+              <td class="muted">{{ it.mtime }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <div class="muted">אין קבצים תואמים.</div>
+    {% endif %}
+  </div>
+{% endblock %}
