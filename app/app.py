@@ -13,7 +13,7 @@ from flask import (
 # ======================================
 
 
-alias = "coldvault_manager"
+alias = "coldvaultmanager"
 HOME_DIR = os.path.expanduser("~")
 FILES_PATH = os.path.join(HOME_DIR, "script_files", alias)
 
