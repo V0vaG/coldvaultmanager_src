@@ -13,7 +13,6 @@ from flask import (
 # Paths, defaults, utils
 # ======================================
 
-
 alias = "coldvaultmanager"
 HOME_DIR = os.path.expanduser("~")
 FILES_PATH = os.path.join(HOME_DIR, "script_files", alias)
@@ -31,6 +30,8 @@ os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(FIRMWARE_DIR, exist_ok=True)
 
 _lock = threading.Lock()
+
+ALLOWED_EXTS = {".ino.bin", ".enc"}  # <any>.ino.bin and <any>.enc
 
 DEFAULT_SETTINGS = {
     "firmware_dir": FIRMWARE_DIR,   # can be changed in /settings
@@ -114,38 +115,71 @@ def append_event(e):
 # ======================================
 # Firmware discovery + selection logic
 # ======================================
-SEMVER_RE = re.compile(
-    r"^(ColdVault|ColdVolt)_(\d+)\.(\d+)\.(\d+)\.ino\.bin$", re.IGNORECASE
-)
 
-def parse_version_from_filename(filename):
-    m = SEMVER_RE.match(filename)
+# Loose version detector: find X.Y.Z anywhere in the name (optional)
+ANY_VER_RE = re.compile(r"(\d+)\.(\d+)\.(\d+)")
+def try_extract_version(filename):
+    m = ANY_VER_RE.search(filename)
     if not m:
         return None
-    major, minor, patch = map(int, (m.group(2), m.group(3), m.group(4)))
-    return (filename, (major, minor, patch))
+    return tuple(map(int, (m.group(1), m.group(2), m.group(3))))
 
-def version_to_str(tup):
-    if not tup: return ""
-    return f"{tup[0]}.{tup[1]}.{tup[2]}"
+def allowed_file(filename: str) -> bool:
+    name = filename.lower()
+    return any(name.endswith(ext) for ext in ALLOWED_EXTS)
+
+def file_ext(filename: str) -> str:
+    n = filename.lower()
+    if n.endswith(".ino.bin"):
+        return ".ino.bin"
+    if n.endswith(".enc"):
+        return ".enc"
+    return os.path.splitext(n)[1]
 
 def find_all_firmwares(dir_path):
-    files = []
+    """
+    Return list of dicts:
+      { filename, path, size, mtime, ext, version? (tuple or None) }
+    """
+    items = []
     if not os.path.isdir(dir_path):
-        return files
+        return items
     for n in os.listdir(dir_path):
+        if not allowed_file(n):
+            continue
         p = os.path.join(dir_path, n)
-        if os.path.isfile(p):
-            parsed = parse_version_from_filename(n)
-            if parsed:
-                files.append(parsed)
-    return files
+        if not os.path.isfile(p):
+            continue
+        st = os.stat(p)
+        items.append({
+            "filename": n,
+            "path": p,
+            "size": st.st_size,
+            "mtime": st.st_mtime,
+            "ext": file_ext(n),
+            "version": try_extract_version(n)  # may be None
+        })
+    return items
+
+def version_to_str(ver):
+    if not ver:
+        return ""
+    return f"{ver[0]}.{ver[1]}.{ver[2]}"
 
 def find_latest_firmware(dir_path):
-    cands = find_all_firmwares(dir_path)
-    if not cands:
+    """
+    Choose latest by mtime. If multiple, prefer .enc over .ino.bin.
+    Returns dict from find_all_firmwares() or None.
+    """
+    allf = find_all_firmwares(dir_path)
+    if not allf:
         return None
-    return max(cands, key=lambda t: t[1])  # by (maj, min, patch)
+    # sort by (mtime desc, enc first)
+    def sort_key(it):
+        # enc first -> give .enc a small bonus
+        enc_bonus = 1 if it["ext"] == ".enc" else 0
+        return (it["mtime"], enc_bonus)
+    return max(allf, key=sort_key)
 
 def choose_firmware_for_device(serial: str, device_id: str):
     s = load_settings()
@@ -155,33 +189,37 @@ def choose_firmware_for_device(serial: str, device_id: str):
     group_name = devices.get(serial, {}).get("group", "")
     chosen = None
 
-    # 1) If device in a group and group has a bound file -> use it
+    # 1) If device in a group and group has a bound file -> use it (any allowed name)
     if group_name and group_name in groups:
         file_for_group = groups[group_name].get("firmware_file", "")
         if file_for_group:
             p = os.path.join(s["firmware_dir"], file_for_group)
-            if os.path.isfile(p):
-                parsed = parse_version_from_filename(file_for_group)
-                version = version_to_str(parsed[1]) if parsed else ""
-                chosen = {"path": p, "filename": file_for_group, "version": version}
+            if os.path.isfile(p) and allowed_file(file_for_group):
+                ver = try_extract_version(file_for_group)
+                chosen = {
+                    "path": p,
+                    "filename": file_for_group,
+                    "version": version_to_str(ver)
+                }
 
     # 2) Otherwise fall back to global strategy (pinned)
     if not chosen:
         if s.get("default_strategy") == "pinned" and s.get("default_firmware"):
             fn = s["default_firmware"]
             p = os.path.join(s["firmware_dir"], fn)
-            if os.path.isfile(p):
-                parsed = parse_version_from_filename(fn)
-                version = version_to_str(parsed[1]) if parsed else ""
-                chosen = {"path": p, "filename": fn, "version": version}
+            if os.path.isfile(p) and allowed_file(fn):
+                ver = try_extract_version(fn)
+                chosen = {"path": p, "filename": fn, "version": version_to_str(ver)}
 
-    # 3) Otherwise serve latest
+    # 3) Otherwise serve latest (by mtime; .enc preferred)
     if not chosen:
         latest = find_latest_firmware(s["firmware_dir"])
         if latest:
-            fn, ver = latest
-            p = os.path.join(s["firmware_dir"], fn)
-            chosen = {"path": p, "filename": fn, "version": version_to_str(ver)}
+            chosen = {
+                "path": latest["path"],
+                "filename": latest["filename"],
+                "version": version_to_str(latest["version"])
+            }
 
     return chosen
 
@@ -208,8 +246,10 @@ def home():
     latest = find_latest_firmware(s["firmware_dir"])
     latest_ctx = None
     if latest:
-        fn, ver = latest
-        latest_ctx = {"filename": fn, "version": f"{ver[0]}.{ver[1]}.{ver[2]}"}
+        latest_ctx = {
+            "filename": latest["filename"],
+            "version": version_to_str(latest["version"])
+        }
     events = load_events()
     devices = load_devices()
     return render_template(
@@ -233,18 +273,15 @@ def firmware_list():
             flash("לא נבחר קובץ.", "error")
             return redirect(url_for("firmware_list"))
 
-        # secure the name and validate pattern
         orig_name = secure_filename(f.filename)
-        m = SEMVER_RE.match(orig_name)
-        if not m:
-            flash("שם הקובץ חייב להיות בפורמט ColdVault_X.Y.Z.ino.bin", "error")
+        if not allowed_file(orig_name):
+            flash("מותר רק קבצים המסתיימים ב- .ino.bin או .enc", "error")
             return redirect(url_for("firmware_list"))
 
         dest_dir = s["firmware_dir"]
         os.makedirs(dest_dir, exist_ok=True)
         dest_path = os.path.join(dest_dir, orig_name)
 
-        # If a file with the same name exists, append a timestamp before saving
         if os.path.exists(dest_path):
             name, ext = os.path.splitext(orig_name)
             ts = datetime.utcnow().strftime("%Y%m%d%H%M%S")
@@ -259,17 +296,17 @@ def firmware_list():
 
     # ---- List files (GET) ----
     items = []
-    for (fn, ver) in find_all_firmwares(s["firmware_dir"]):
-        p = os.path.join(s["firmware_dir"], fn)
-        st = os.stat(p)
+    for it in find_all_firmwares(s["firmware_dir"]):
         items.append({
-            "filename": fn,
-            "version": f"{ver[0]}.{ver[1]}.{ver[2]}",
-            "size": st.st_size,
-            "size_h": human_size(st.st_size),
-            "mtime": datetime.utcfromtimestamp(st.st_mtime).isoformat() + "Z"
+            "filename": it["filename"],
+            "version": version_to_str(it["version"]),
+            "size": it["size"],
+            "size_h": human_size(it["size"]),
+            "mtime": datetime.utcfromtimestamp(it["mtime"]).isoformat() + "Z",
+            "ext": it["ext"],
         })
-    items.sort(key=lambda x: tuple(map(int, x["version"].split("."))), reverse=True)
+    # Sort newest first; .enc before .ino.bin when equal mtime
+    items.sort(key=lambda x: (x["mtime"], 1 if x["ext"] == ".enc" else 0), reverse=True)
 
     return render_template(
         "firmware.html",
@@ -285,7 +322,7 @@ def groups_page():
     s = load_settings()
     groups = load_groups()
     devices = load_devices()
-    fw_files = [fn for (fn, _) in find_all_firmwares(s["firmware_dir"])]
+    fw_files = [it["filename"] for it in find_all_firmwares(s["firmware_dir"])]
 
     if request.method == "POST":
         act = request.form.get("action", "")
@@ -324,8 +361,8 @@ def groups_page():
             if name in groups:
                 if fw:
                     p = os.path.join(s["firmware_dir"], fw)
-                    if not os.path.isfile(p):
-                        flash("קובץ עדכון לא קיים בתיקייה", "error")
+                    if not (os.path.isfile(p) and allowed_file(fw)):
+                        flash("קובץ עדכון לא קיים/לא מותר בתיקייה", "error")
                         return redirect(url_for("groups_page"))
                 groups[name]["firmware_file"] = fw
                 groups[name]["signature"] = sig
@@ -363,7 +400,7 @@ def events_page():
 @app.route("/settings", methods=["GET", "POST"])
 def settings_page():
     s = load_settings()
-    fw_files = [fn for (fn, _) in find_all_firmwares(s["firmware_dir"])]
+    fw_files = [it["filename"] for it in find_all_firmwares(s["firmware_dir"])]
 
     if request.method == "POST":
         s["firmware_dir"]     = request.form.get("firmware_dir", s["firmware_dir"]).strip() or s["firmware_dir"]
@@ -425,8 +462,7 @@ if __name__ == "__main__":
     s = load_settings()
     latest = find_latest_firmware(s["firmware_dir"])
     if latest:
-        fn, ver = latest
-        print(f"* Latest detected: {fn} (v{ver[0]}.{ver[1]}.{ver[2]}) in {s['firmware_dir']}")
+        print(f"* Latest detected: {latest['filename']} (v{version_to_str(latest['version'])}) in {s['firmware_dir']}")
     else:
         print(f"* No firmware files found in {s['firmware_dir']}")
     app.run(host="0.0.0.0", port=5000)
