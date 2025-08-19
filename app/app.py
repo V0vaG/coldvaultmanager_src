@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import os, re, json, threading
+import os, re, json, threading, io, struct, hashlib
 from datetime import datetime
+from secrets import token_bytes
 from werkzeug.utils import secure_filename
 from flask import (
     Flask, request, send_file, redirect, url_for,
-    render_template, jsonify, abort, flash
+    render_template, jsonify, abort, flash, Response
 )
 
 # ======================================
@@ -37,7 +38,8 @@ DEFAULT_SETTINGS = {
     "firmware_dir": FIRMWARE_DIR,   # can be changed in /settings
     "default_firmware": "",         # used only if default_strategy == "pinned"
     "default_strategy": "latest",   # "latest" or "pinned"
-    "events_cap": 2000              # cap event list length
+    "events_cap": 2000,             # cap event list length
+    "pbkdf2_iterations": 200000     # iterations used when encrypting on the server
 }
 
 def now_iso():
@@ -81,7 +83,7 @@ def save_settings(s):
     _save_json(SETTINGS_JSON, s)
 
 def load_devices():
-    # { serial: { device_id, group, last_seen, last_version, last_filename } }
+    # { serial: { device_id, group, last_seen, last_version, last_filename, ota_password } }
     return _load_json(DEVICES_JSON, {})
 
 def save_devices(d):
@@ -176,7 +178,6 @@ def find_latest_firmware(dir_path):
         return None
     # sort by (mtime desc, enc first)
     def sort_key(it):
-        # enc first -> give .enc a small bonus
         enc_bonus = 1 if it["ext"] == ".enc" else 0
         return (it["mtime"], enc_bonus)
     return max(allf, key=sort_key)
@@ -232,6 +233,54 @@ def record_device_touch(serial, device_id, filename, version):
     info["last_version"] = version
     devices[serial] = info
     save_devices(devices)
+
+# ======================================
+# AES-GCM encryptor (same wire format as your CLI script)
+# ======================================
+
+# Prefer 'cryptography'; fall back to 'pycryptodome'
+try:
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    def _aesgcm_encrypt(key, nonce, plaintext):
+        aes = AESGCM(key)
+        # returns ciphertext || tag(16)
+        return aes.encrypt(nonce, plaintext, None)
+except Exception:
+    try:
+        from Crypto.Cipher import AES  # pycryptodome
+        def _aesgcm_encrypt(key, nonce, plaintext):
+            cipher = AES.new(key, AES.MODE_GCM, nonce=nonce, mac_len=16)
+            ct, tag = cipher.encrypt_and_digest(plaintext)
+            return ct + tag
+    except Exception:
+        raise SystemExit("No AES-GCM backend. Install 'cryptography' (preferred) or 'pycryptodome'.")
+
+MAGIC = b'EOTA1\0'          # 6 bytes
+ALG_ID = 1                  # 1 = AES-256-GCM + PBKDF2-HMAC-SHA256
+HEADER_FMT = "!6sB I 16s 12s Q"  # magic, alg, iter, salt(16), nonce(12), plain_len
+HEADER_SIZE = struct.calcsize(HEADER_FMT)  # 47
+
+def encrypt_firmware_bytes(plain_bytes: bytes, password: str, iterations: int) -> bytes:
+    """
+    Encrypt plaintext firmware into the exact header + AES-256-GCM format
+    your device expects. Returns bytes: [header][ciphertext][tag(16)].
+    """
+    salt  = token_bytes(16)
+    nonce = token_bytes(12)
+    key   = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations, dklen=32)
+
+    ct_and_tag = _aesgcm_encrypt(key, nonce, plain_bytes)
+    if len(ct_and_tag) < 16:
+        raise RuntimeError("encryption failed (tag missing)")
+
+    ct, tag = ct_and_tag[:-16], ct_and_tag[-16:]
+    header = struct.pack(HEADER_FMT, MAGIC, ALG_ID, iterations, salt, nonce, len(plain_bytes))
+    return header + ct + tag
+
+def encrypt_firmware_file_to_memory(infile_path: str, password: str, iterations: int) -> bytes:
+    with open(infile_path, "rb") as f:
+        plain = f.read()
+    return encrypt_firmware_bytes(plain, password, iterations)
 
 # ======================================
 # Flask app
@@ -410,6 +459,12 @@ def settings_page():
             s["events_cap"] = int(request.form.get("events_cap", s["events_cap"]))
         except Exception:
             pass
+        try:
+            iters = int(request.form.get("pbkdf2_iterations", s["pbkdf2_iterations"]))
+            if 10000 <= iters <= 1000000:
+                s["pbkdf2_iterations"] = iters
+        except Exception:
+            pass
         save_settings(s)
         flash("ההגדרות נשמרו")
         return redirect(url_for("settings_page"))
@@ -417,18 +472,37 @@ def settings_page():
     return render_template("settings.html", title="Settings", s=s, fw_files=fw_files, datetime=datetime)
 
 # -------- OTA endpoint for ESP device --------
-# GET /firmware.php?serial=...&device_id=...
+# GET /firmware.php?serial=...&device_id=...[&otp=...]
 @app.get("/firmware.php")
 def firmware_php():
-    serial = request.args.get("serial", "").strip()
-    device_id = request.args.get("device_id", "").strip()
+    serial = (request.args.get("serial", "") or "").strip()
+    device_id = (request.args.get("device_id", "") or "").strip()
     if not serial:
         abort(400, "missing serial")
+
+    # --- Accept password from device on first (or any) request
+    # Prefer query param 'otp', else header 'X-OTA-Password'
+    incoming_otp = (request.args.get("otp", "") or "").strip()
+    if not incoming_otp:
+        incoming_otp = (request.headers.get("X-OTA-Password", "") or "").strip()
+
+    devices = load_devices()
+    info = devices.get(serial, {})
+    stored_otp = info.get("ota_password", "")
+
+    if incoming_otp:
+        if incoming_otp != stored_otp:
+            info["ota_password"] = incoming_otp
+            devices[serial] = info
+            save_devices(devices)
+    # refresh stored_otp after potential save
+    stored_otp = devices.get(serial, {}).get("ota_password", "")
 
     chosen = choose_firmware_for_device(serial, device_id)
     if not chosen:
         abort(404, "no firmware available")
 
+    # Record touch
     evt = {
         "ts": now_iso(),
         "ip": request.headers.get("X-Forwarded-For", request.remote_addr or ""),
@@ -441,11 +515,47 @@ def firmware_php():
     append_event(evt)
     record_device_touch(serial, device_id, chosen["filename"], chosen["version"])
 
+    ext = file_ext(chosen["filename"])
+    s = load_settings()
+    iterations = int(s.get("pbkdf2_iterations", 200000))
+
+    # If file is already encrypted (.enc) -> send as-is
+    if ext == ".enc":
+        return send_file(
+            chosen["path"],
+            mimetype="application/octet-stream",
+            as_attachment=True,
+            download_name=chosen["filename"]
+        )
+
+    # If it's a plain .ino.bin, we need a password for this device
+    if not stored_otp:
+        # Device didn't send us a password yet; tell it to try again with otp
+        abort(428, "device has no stored OTP; resend request with ?otp= or X-OTA-Password")
+
+    # Encrypt on the fly (in-memory) and serve as .enc
+    try:
+        enc_bytes = encrypt_firmware_file_to_memory(chosen["path"], stored_otp, iterations)
+    except Exception as e:
+        abort(500, f"encryption failed: {e}")
+
+    # Name as original but .enc
+    base, _ = os.path.splitext(chosen["filename"])  # removes last ext
+    # Keep removing if endswith .bin so we end with .enc cleanly
+    if base.lower().endswith(".ino"):
+        out_name = base + ".enc"
+    elif chosen["filename"].lower().endswith(".ino.bin"):
+        out_name = chosen["filename"][:-8] + ".enc"  # strip '.ino.bin'
+    else:
+        out_name = chosen["filename"] + ".enc"
+
+    bio = io.BytesIO(enc_bytes)
+    bio.seek(0)
     return send_file(
-        chosen["path"],
+        bio,
         mimetype="application/octet-stream",
         as_attachment=True,
-        download_name=chosen["filename"]
+        download_name=out_name
     )
 
 # -------- Misc --------
