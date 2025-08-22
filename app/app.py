@@ -83,7 +83,6 @@ def save_settings(s):
     _save_json(SETTINGS_JSON, s)
 
 def load_devices():
-    # { serial: { device_id, group, last_seen, last_version, last_filename, ota_password } }
     return _load_json(DEVICES_JSON, {})
 
 def save_devices(d):
@@ -109,10 +108,19 @@ def append_event(e):
     if cap and len(events) > cap:
         events = events[-cap:]
     save_events(events)
-    # line log
-    line = f"[{e.get('ts')}] {e.get('ip','?')} serial={e.get('serial','?')} device_id={e.get('device_id','?')} file={e.get('filename','?')} ver={e.get('version','?')}"
+    # extended line log (adds type + device-reported version)
+    line = (
+        f"[{e.get('ts')}] {e.get('ip','?')}"
+        f" serial={e.get('serial','?')}"
+        f" device_id={e.get('device_id','?')}"
+        f" type={e.get('dev_type','')}"
+        f" cur={e.get('dev_version','')}"
+        f" file={e.get('filename','?')}"
+        f" ver={e.get('version','?')}"
+    )
     with _lock, open(EVENTS_LOG_TXT, "a", encoding="utf-8") as f:
         f.write(line + "\n")
+
 
 # ======================================
 # Firmware discovery + selection logic
@@ -224,13 +232,18 @@ def choose_firmware_for_device(serial: str, device_id: str):
 
     return chosen
 
-def record_device_touch(serial, device_id, filename, version):
+def record_device_touch(serial, device_id, filename, version, dev_type=None, dev_version=None):
     devices = load_devices()
     info = devices.get(serial, {})
     info["device_id"] = device_id or info.get("device_id", "")
     info["last_seen"] = now_iso()
     info["last_filename"] = filename
     info["last_version"] = version
+    # new: persist device-reported fields if provided
+    if dev_type:
+        info["type"] = dev_type
+    if dev_version:
+        info["reported_version"] = dev_version
     devices[serial] = info
     save_devices(devices)
 
@@ -475,6 +488,88 @@ def settings_page():
 # GET /firmware.php?serial=...&device_id=...[&otp=...]
 @app.get("/firmware.php")
 def firmware_php():
+    serial = (request.args.get("serial", "") or "").strip()
+    device_id = (request.args.get("device_id", "") or "").strip()
+    dev_type = (request.args.get("type", "") or "").strip()
+    dev_version = (request.args.get("version", "") or "").strip()
+    if not serial:
+        abort(400, "missing serial")
+
+    # accept password/OTP from device
+    incoming_otp = (request.args.get("otp", "") or "").strip()
+    if not incoming_otp:
+        incoming_otp = (request.headers.get("X-OTA-Password", "") or "").strip()
+
+    devices = load_devices()
+    info = devices.get(serial, {})
+    stored_otp = info.get("ota_password", "")
+
+    if incoming_otp:
+        if incoming_otp != stored_otp:
+            info["ota_password"] = incoming_otp
+            devices[serial] = info
+            save_devices(devices)
+    stored_otp = devices.get(serial, {}).get("ota_password", "")
+
+    chosen = choose_firmware_for_device(serial, device_id)
+    if not chosen:
+        abort(404, "no firmware available")
+
+    # record event (adds dev_type/dev_version)
+    evt = {
+        "ts": now_iso(),
+        "ip": request.headers.get("X-Forwarded-For", request.remote_addr or ""),
+        "ua": request.headers.get("User-Agent", ""),
+        "serial": serial,
+        "device_id": device_id,
+        "filename": chosen["filename"],
+        "version": chosen["version"],      # served version
+        "dev_type": dev_type,              # device-reported type
+        "dev_version": dev_version,        # device-reported fw
+    }
+    append_event(evt)
+    record_device_touch(
+        serial, device_id, chosen["filename"], chosen["version"],
+        dev_type=dev_type, dev_version=dev_version
+    )
+
+    ext = file_ext(chosen["filename"])
+    s = load_settings()
+    iterations = int(s.get("pbkdf2_iterations", 200000))
+
+    if ext == ".enc":
+        return send_file(
+            chosen["path"],
+            mimetype="application/octet-stream",
+            as_attachment=True,
+            download_name=chosen["filename"]
+        )
+
+    if not stored_otp:
+        abort(428, "device has no stored OTP; resend request with ?otp= or X-OTA-Password")
+
+    try:
+        enc_bytes = encrypt_firmware_file_to_memory(chosen["path"], stored_otp, iterations)
+    except Exception as e:
+        abort(500, f"encryption failed: {e}")
+
+    base, _ = os.path.splitext(chosen["filename"])
+    if base.lower().endswith(".ino"):
+        out_name = base + ".enc"
+    elif chosen["filename"].lower().endswith(".ino.bin"):
+        out_name = chosen["filename"][:-8] + ".enc"
+    else:
+        out_name = chosen["filename"] + ".enc"
+
+    bio = io.BytesIO(enc_bytes)
+    bio.seek(0)
+    return send_file(
+        bio,
+        mimetype="application/octet-stream",
+        as_attachment=True,
+        download_name=out_name
+    )
+
     serial = (request.args.get("serial", "") or "").strip()
     device_id = (request.args.get("device_id", "") or "").strip()
     if not serial:
