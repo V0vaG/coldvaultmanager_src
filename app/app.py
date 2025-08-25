@@ -351,6 +351,8 @@ def home():
         latest=latest_ctx,
         events=events,
         devices=devices,
+        version=version, 
+        branch=branch,
         datetime=datetime
     )
 
@@ -406,7 +408,9 @@ def firmware_list():
         title="Firmware Files",
         items=items,
         fw_dir=s["firmware_dir"],
-        datetime=datetime
+        datetime=datetime,
+        version=version,
+        branch=branch
     )
 
 @app.post("/settings/autosave")
@@ -458,7 +462,7 @@ def settings_autosave():
 
     # Always return a JSON success object
     fw_files = [it["filename"] for it in find_all_firmwares(s["firmware_dir"])]
-    return jsonify(ok=True, changed=changed, settings=s, fw_files=fw_files)
+    return jsonify(ok=True, changed=changed, settings=s, fw_files=fw_files, version=version, branch=branch)
 
 
 # ===== add the API endpoint (place anywhere after app is created) =====
@@ -538,7 +542,9 @@ def api_upload_firmware():
         size=st.st_size,
         size_h=human_size(st.st_size),
         mtime=datetime.utcfromtimestamp(st.st_mtime).isoformat() + "Z",
-        dir=dest_dir
+        dir=dest_dir,
+        version=version,
+        branch=branch
     )
 
 
@@ -614,13 +620,13 @@ def groups_page():
                 flash(f"קבוצה '{group}' נמחקה")
             return redirect(url_for("groups_page"))
 
-    return render_template("groups.html", title="Groups", groups=groups, fw_files=fw_files, datetime=datetime)
+    return render_template("groups.html", title="Groups", groups=groups, version=version, branch=branch, fw_files=fw_files, datetime=datetime)
 
 # -------- Events --------
 @app.get("/events")
 def events_page():
     events = load_events()
-    return render_template("events.html", title="Events", events=events, datetime=datetime)
+    return render_template("events.html", title="Events", events=events, version=version, branch=branch,datetime=datetime)
 
 # -------- Settings --------
 # ===== extend settings_page() to handle checkbox + token generation =====
@@ -667,7 +673,7 @@ def settings_page():
         flash("ההגדרות נשמרו")
         return redirect(url_for("settings_page"))
 
-    return render_template("settings.html", title="Settings", s=s, fw_files=fw_files, ip=ip, datetime=datetime)
+    return render_template("settings.html", title="Settings", s=s, fw_files=fw_files, version=version, branch=branch, ip=ip, datetime=datetime)
 
 
 # -------- OTA endpoint for ESP device --------
