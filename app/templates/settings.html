@@ -7,6 +7,7 @@
         <input name="firmware_dir" type="text" value="{{ s.firmware_dir }}" style="width:100%">
       </label>
     </div>
+
     <div>
       <label>אסטרטגיה כללית:
         <select name="default_strategy">
@@ -15,6 +16,7 @@
         </select>
       </label>
     </div>
+
     <div>
       <label>קובץ ברירת מחדל (כשאסטרטגיה נעוצה):
         <select name="default_firmware">
@@ -25,13 +27,58 @@
         </select>
       </label>
     </div>
+
     <div>
       <label>מקס' אירועים לשמירה:
         <input name="events_cap" type="number" min="100" step="100" value="{{ s.events_cap }}">
       </label>
     </div>
-    <div style="margin-top:8px">
-      <button class="btn btn-primary" type="submit">שמור</button>
+
+    <hr>
+
+    <div>
+      <label>הפעל העלאת קובץ דרך API:
+        <input name="api_upload_enabled" type="checkbox" {{ 'checked' if s.api_upload_enabled else '' }}>
+      </label>
+      <div class="hint">מאפשר להעלות קובצי ‎.ino.bin/.enc‎ בצורה אוטומטית ע"י סקריפט.</div>
     </div>
+
+    <div style="margin:8px 0">
+      <button class="btn btn-primary" type="submit">שמור</button>
+      <!-- secondary action to generate token -->
+      <button class="btn" type="submit" name="action" value="generate_api_token">צור/חדש טוקן API</button>
+    </div>
+
+    {% if s.api_upload_enabled %}
+      <div class="card" style="margin-top:12px">
+        <h3>API Firmware Upload</h3>
+        {% if s.api_token %}
+          <div><b>Token:</b> <code>{{ s.api_token }}</code></div>
+          <div class="hint">שמור את הטוקן בסוד. אפשר לחדש בכל רגע.</div>
+        {% else %}
+          <div class="warn">אין טוקן פעיל. לחץ על "צור/חדש טוקן API".</div>
+        {% endif %}
+
+        {% if s.api_token %}
+          <h4 style="margin-top:10px">דוגמת פקודה (bash)</h4>
+          <pre style="white-space:pre-wrap; direction:ltr">
+# --- variables you can adjust ---
+HOST="http://127.0.0.1:5000"
+TOKEN="{{ s.api_token }}"
+FILE="/path/to/firmware.ino.bin"
+
+# multipart/form-data upload:
+curl -X POST "$HOST/api/upload_firmware" \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "file=@${FILE}"
+
+# or raw binary (must pass a filename):
+# curl -X POST "$HOST/api/upload_firmware?filename=$(basename "$FILE")" \
+#   -H "Authorization: Bearer $TOKEN" \
+#   --data-binary @"$FILE"
+          </pre>
+        {% endif %}
+      </div>
+    {% endif %}
   </form>
 {% endblock %}

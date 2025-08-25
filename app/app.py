@@ -70,9 +70,35 @@ def human_size(n):
         s /= 1024
     return f"{s:.1f} PB"
 
+
+
+
+
+
+
 # --------------------------------------
 # Settings / devices / groups / events
 # --------------------------------------
+# ===== add to DEFAULT_SETTINGS =====
+DEFAULT_SETTINGS = {
+    "firmware_dir": FIRMWARE_DIR,
+    "default_firmware": "",
+    "default_strategy": "latest",
+    "events_cap": 2000,
+    "pbkdf2_iterations": 200000,
+    # --- NEW ---
+    "api_upload_enabled": False,
+    "api_token": ""
+}
+
+# ===== add helper near other utils =====
+def gen_api_token(nbytes: int = 24) -> str:
+    # URL-safe token; ~32 chars. Increase nbytes for longer.
+    return token_bytes(nbytes).hex()
+
+
+
+
 def load_settings():
     s = _load_json(SETTINGS_JSON, DEFAULT_SETTINGS.copy())
     for k, v in DEFAULT_SETTINGS.items():
@@ -378,6 +404,88 @@ def firmware_list():
         datetime=datetime
     )
 
+
+# ===== add the API endpoint (place anywhere after app is created) =====
+@app.post("/api/upload_firmware")
+def api_upload_firmware():
+    """
+    Upload endpoint for CI/scripts.
+    Auth:
+      - Header: Authorization: Bearer <token>
+      - OR query: ?token=<token>
+    Body:
+      - multipart/form-data with field 'file' (preferred)
+      - OR raw application/octet-stream with ?filename=<name>
+    Only allowed extensions per ALLOWED_EXTS. Typically use .ino.bin
+    """
+    s = load_settings()
+    if not s.get("api_upload_enabled"):
+        return jsonify(error="API upload disabled"), 403
+
+    # ---- auth ----
+    auth = (request.headers.get("Authorization") or "").strip()
+    if auth.lower().startswith("bearer "):
+        incoming_token = auth.split(" ", 1)[1].strip()
+    else:
+        incoming_token = (request.args.get("token", "") or "").strip()
+
+    if not incoming_token or incoming_token != s.get("api_token", ""):
+        return jsonify(error="unauthorized"), 401
+
+    dest_dir = s["firmware_dir"]
+    os.makedirs(dest_dir, exist_ok=True)
+
+    # ---- payload parsing ----
+    uploaded_path = None
+    orig_name = None
+
+    if "file" in request.files:
+        f = request.files["file"]
+        if not f or not f.filename:
+            return jsonify(error="no file"), 400
+        orig_name = secure_filename(f.filename)
+        if not allowed_file(orig_name):
+            return jsonify(error="only .ino.bin or .enc are allowed"), 400
+        dest_path = os.path.join(dest_dir, orig_name)
+        if os.path.exists(dest_path):
+            name, ext = os.path.splitext(orig_name)
+            ts = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+            orig_name = f"{name}_{ts}{ext}"
+            dest_path = os.path.join(dest_dir, orig_name)
+        f.save(dest_path)
+        uploaded_path = dest_path
+    else:
+        # Support raw binary uploads
+        raw = request.get_data()
+        if not raw:
+            return jsonify(error="no file data"), 400
+        filename = secure_filename(request.args.get("filename", ""))
+        if not filename:
+            return jsonify(error="missing ?filename="), 400
+        if not allowed_file(filename):
+            return jsonify(error="only .ino.bin or .enc are allowed"), 400
+        dest_path = os.path.join(dest_dir, filename)
+        if os.path.exists(dest_path):
+            name, ext = os.path.splitext(filename)
+            ts = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+            filename = f"{name}_{ts}{ext}"
+            dest_path = os.path.join(dest_dir, filename)
+        with open(dest_path, "wb") as wf:
+            wf.write(raw)
+        orig_name = filename
+        uploaded_path = dest_path
+
+    st = os.stat(uploaded_path)
+    return jsonify(
+        ok=True,
+        filename=os.path.basename(uploaded_path),
+        size=st.st_size,
+        size_h=human_size(st.st_size),
+        mtime=datetime.utcfromtimestamp(st.st_mtime).isoformat() + "Z",
+        dir=dest_dir
+    )
+
+
 # -------- Groups management --------
 @app.route("/groups", methods=["GET", "POST"])
 def groups_page():
@@ -459,15 +567,30 @@ def events_page():
     return render_template("events.html", title="Events", events=events, datetime=datetime)
 
 # -------- Settings --------
+# ===== extend settings_page() to handle checkbox + token generation =====
 @app.route("/settings", methods=["GET", "POST"])
 def settings_page():
     s = load_settings()
     fw_files = [it["filename"] for it in find_all_firmwares(s["firmware_dir"])]
 
     if request.method == "POST":
+        # recognize sub-action from form buttons
+        act = request.form.get("action", "")
+
+        if act == "generate_api_token":
+            s["api_token"] = gen_api_token()
+            save_settings(s)
+            flash("נוצר טוקן API חדש", "success")
+            return redirect(url_for("settings_page"))
+
+        # normal save
         s["firmware_dir"]     = request.form.get("firmware_dir", s["firmware_dir"]).strip() or s["firmware_dir"]
         s["default_strategy"] = request.form.get("default_strategy", s["default_strategy"]).strip() or "latest"
         s["default_firmware"] = request.form.get("default_firmware", "").strip()
+
+        # checkbox
+        s["api_upload_enabled"] = (request.form.get("api_upload_enabled") == "on")
+
         try:
             s["events_cap"] = int(request.form.get("events_cap", s["events_cap"]))
         except Exception:
@@ -478,11 +601,13 @@ def settings_page():
                 s["pbkdf2_iterations"] = iters
         except Exception:
             pass
+
         save_settings(s)
         flash("ההגדרות נשמרו")
         return redirect(url_for("settings_page"))
 
     return render_template("settings.html", title="Settings", s=s, fw_files=fw_files, datetime=datetime)
+
 
 # -------- OTA endpoint for ESP device --------
 # GET /firmware.php?serial=...&device_id=...[&otp=...]
