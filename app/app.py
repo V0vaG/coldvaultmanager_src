@@ -27,6 +27,10 @@ GROUPS_JSON    = os.path.join(DATA_DIR, "groups.json")   # dict[group]  -> info
 SETTINGS_JSON  = os.path.join(DATA_DIR, "settings.json") # dict
 EVENTS_LOG_TXT = os.path.join(DATA_DIR, "events.log")    # text log
 
+
+version = os.getenv('VERSION', 'N/A')
+branch = os.getenv('BRANCH','N/A')
+
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(FIRMWARE_DIR, exist_ok=True)
 
@@ -762,6 +766,7 @@ def healthz():
 
 # -------- Run --------
 if __name__ == "__main__":
+    print (version, branch)
     s = load_settings()
     latest = find_latest_firmware(s["firmware_dir"])
     if latest:
