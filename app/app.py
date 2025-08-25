@@ -404,6 +404,57 @@ def firmware_list():
         datetime=datetime
     )
 
+@app.post("/settings/autosave")
+def settings_autosave():
+    s = load_settings()
+    try:
+        data = request.get_json(force=True) or {}
+    except Exception:
+        return jsonify(ok=False, error="bad json"), 400
+
+    allowed = {
+        "firmware_dir",
+        "default_strategy",
+        "default_firmware",
+        "events_cap",
+        "pbkdf2_iterations",
+        "api_upload_enabled",
+    }
+
+    changed = False
+    for k, v in data.items():
+        if k not in allowed:
+            continue
+        if k == "events_cap":
+            try:
+                v = max(100, int(v))
+            except Exception:
+                continue
+        elif k == "pbkdf2_iterations":
+            try:
+                iters = int(v)
+                if not (10000 <= iters <= 1000000):
+                    continue
+                v = iters
+            except Exception:
+                continue
+        elif k == "api_upload_enabled":
+            # Expect boolean from JS
+            v = bool(v)
+        elif k in ("default_strategy", "default_firmware", "firmware_dir"):
+            v = (v or "").strip()
+
+        if s.get(k) != v:
+            s[k] = v
+            changed = True
+
+    if changed:
+        save_settings(s)
+
+    # Always return a JSON success object
+    fw_files = [it["filename"] for it in find_all_firmwares(s["firmware_dir"])]
+    return jsonify(ok=True, changed=changed, settings=s, fw_files=fw_files)
+
 
 # ===== add the API endpoint (place anywhere after app is created) =====
 @app.post("/api/upload_firmware")
@@ -581,7 +632,12 @@ def settings_page():
             s["api_token"] = gen_api_token()
             save_settings(s)
             flash("נוצר טוקן API חדש", "success")
-            return redirect(url_for("settings_page"))
+            # Re-render immediately so the token textbox/buttons appear now
+            return render_template("settings.html",
+                                   title="Settings",
+                                   s=s,
+                                   fw_files=fw_files,
+                                   datetime=datetime)
 
         # normal save
         s["firmware_dir"]     = request.form.get("firmware_dir", s["firmware_dir"]).strip() or s["firmware_dir"]
@@ -683,89 +739,6 @@ def firmware_php():
         out_name = base + ".enc"
     elif chosen["filename"].lower().endswith(".ino.bin"):
         out_name = chosen["filename"][:-8] + ".enc"
-    else:
-        out_name = chosen["filename"] + ".enc"
-
-    bio = io.BytesIO(enc_bytes)
-    bio.seek(0)
-    return send_file(
-        bio,
-        mimetype="application/octet-stream",
-        as_attachment=True,
-        download_name=out_name
-    )
-
-    serial = (request.args.get("serial", "") or "").strip()
-    device_id = (request.args.get("device_id", "") or "").strip()
-    if not serial:
-        abort(400, "missing serial")
-
-    # --- Accept password from device on first (or any) request
-    # Prefer query param 'otp', else header 'X-OTA-Password'
-    incoming_otp = (request.args.get("otp", "") or "").strip()
-    if not incoming_otp:
-        incoming_otp = (request.headers.get("X-OTA-Password", "") or "").strip()
-
-    devices = load_devices()
-    info = devices.get(serial, {})
-    stored_otp = info.get("ota_password", "")
-
-    if incoming_otp:
-        if incoming_otp != stored_otp:
-            info["ota_password"] = incoming_otp
-            devices[serial] = info
-            save_devices(devices)
-    # refresh stored_otp after potential save
-    stored_otp = devices.get(serial, {}).get("ota_password", "")
-
-    chosen = choose_firmware_for_device(serial, device_id)
-    if not chosen:
-        abort(404, "no firmware available")
-
-    # Record touch
-    evt = {
-        "ts": now_iso(),
-        "ip": request.headers.get("X-Forwarded-For", request.remote_addr or ""),
-        "ua": request.headers.get("User-Agent", ""),
-        "serial": serial,
-        "device_id": device_id,
-        "filename": chosen["filename"],
-        "version": chosen["version"],
-    }
-    append_event(evt)
-    record_device_touch(serial, device_id, chosen["filename"], chosen["version"])
-
-    ext = file_ext(chosen["filename"])
-    s = load_settings()
-    iterations = int(s.get("pbkdf2_iterations", 200000))
-
-    # If file is already encrypted (.enc) -> send as-is
-    if ext == ".enc":
-        return send_file(
-            chosen["path"],
-            mimetype="application/octet-stream",
-            as_attachment=True,
-            download_name=chosen["filename"]
-        )
-
-    # If it's a plain .ino.bin, we need a password for this device
-    if not stored_otp:
-        # Device didn't send us a password yet; tell it to try again with otp
-        abort(428, "device has no stored OTP; resend request with ?otp= or X-OTA-Password")
-
-    # Encrypt on the fly (in-memory) and serve as .enc
-    try:
-        enc_bytes = encrypt_firmware_file_to_memory(chosen["path"], stored_otp, iterations)
-    except Exception as e:
-        abort(500, f"encryption failed: {e}")
-
-    # Name as original but .enc
-    base, _ = os.path.splitext(chosen["filename"])  # removes last ext
-    # Keep removing if endswith .bin so we end with .enc cleanly
-    if base.lower().endswith(".ino"):
-        out_name = base + ".enc"
-    elif chosen["filename"].lower().endswith(".ino.bin"):
-        out_name = chosen["filename"][:-8] + ".enc"  # strip '.ino.bin'
     else:
         out_name = chosen["filename"] + ".enc"
 

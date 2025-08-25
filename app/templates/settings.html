@@ -1,16 +1,19 @@
 {% extends "layout.html" %}
 {% block content %}
   <h2>הגדרות</h2>
-  <form method="post" class="card">
+
+  <!-- Main options form (auto-save, no Save button) -->
+  <form method="post" class="card" onsubmit="return false;">
     <div>
       <label>תיקיית קבצי גרסה:
-        <input name="firmware_dir" type="text" value="{{ s.firmware_dir }}" style="width:100%">
+        <input name="firmware_dir" type="text" value="{{ s.firmware_dir }}" style="width:100%"
+               oninput="queueSave('firmware_dir', this.value)">
       </label>
     </div>
 
     <div>
       <label>אסטרטגיה כללית:
-        <select name="default_strategy">
+        <select name="default_strategy" onchange="queueSave('default_strategy', this.value)">
           <option value="latest" {{ 'selected' if s.default_strategy=='latest' else '' }}>האחרון</option>
           <option value="pinned" {{ 'selected' if s.default_strategy=='pinned' else '' }}>נעוץ (קובץ קבוע)</option>
         </select>
@@ -19,7 +22,7 @@
 
     <div>
       <label>קובץ ברירת מחדל (כשאסטרטגיה נעוצה):
-        <select name="default_firmware">
+        <select name="default_firmware" onchange="queueSave('default_firmware', this.value)">
           <option value="">—</option>
           {% for f in fw_files %}
             <option value="{{ f }}" {{ 'selected' if f==s.default_firmware else '' }}>{{ f }}</option>
@@ -30,7 +33,8 @@
 
     <div>
       <label>מקס' אירועים לשמירה:
-        <input name="events_cap" type="number" min="100" step="100" value="{{ s.events_cap }}">
+        <input name="events_cap" type="number" min="100" step="100" value="{{ s.events_cap }}"
+               oninput="queueSave('events_cap', this.value)">
       </label>
     </div>
 
@@ -38,92 +42,182 @@
 
     <div>
       <label>הפעל העלאת קובץ דרך API:
-        <input name="api_upload_enabled" type="checkbox" {{ 'checked' if s.api_upload_enabled else '' }}>
+        <input name="api_upload_enabled" type="checkbox" {{ 'checked' if s.api_upload_enabled else '' }}
+               onchange="queueSave('api_upload_enabled', this.checked)">
       </label>
       <div class="hint">מאפשר להעלות קובצי ‎.ino.bin/.enc‎ בצורה אוטומטית ע"י סקריפט.</div>
     </div>
 
-    <div style="margin:8px 0">
-      <button class="btn btn-primary" type="submit">שמור</button>
-      <button class="btn" type="submit" name="action" value="generate_api_token">צור/חדש טוקן API</button>
+    <div style="margin:8px 0; display:flex; gap:8px; flex-wrap:wrap">
+      <!-- FIXED: normal button + JS fetch -->
+      <button class="btn" type="button" onclick="generateToken()">צור/חדש טוקן API</button>
     </div>
-
-    {% if s.api_upload_enabled %}
-      <div class="card" style="margin-top:12px">
-        <h3>API Firmware Upload</h3>
-
-        {% if s.api_token %}
-          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:6px">
-            <label for="apiTokenField" style="min-width:90px"><b>Token:</b></label>
-            <input id="apiTokenField" type="password" value="{{ s.api_token }}" readonly style="flex:1; min-width:260px">
-            <button type="button" class="btn" onclick="copyToken()">העתק</button>
-            <button type="button" id="revealBtn" class="btn" onclick="toggleToken()">הצג</button>
-          </div>
-          <div class="hint">שמור את הטוקן בסוד. ניתן לחדש בכל רגע בעזרת הכפתור למעלה.</div>
-        {% else %}
-          <div class="warn">אין טוקן פעיל. לחץ על "צור/חדש טוקן API".</div>
-        {% endif %}
-
-        {% if s.api_token %}
-          <h4 style="margin-top:12px">דוגמת פקודה (bash)</h4>
-          <pre style="white-space:pre-wrap; direction:ltr">
-# --- variables you can adjust ---
-HOST="http://127.0.0.1:5000"
-TOKEN="{{ s.api_token }}"   # לחץ "העתק" למעלה והדבק כאן אם תרצה
-FILE="/path/to/firmware.ino.bin"
-
-# multipart/form-data upload:
-curl -X POST "$HOST/api/upload_firmware" \
-  -H "Authorization: Bearer $TOKEN" \
-  -F "file=@${FILE}"
-
-# or raw binary (must pass a filename):
-# curl -X POST "$HOST/api/upload_firmware?filename=$(basename "$FILE")" \
-#   -H "Authorization: Bearer $TOKEN" \
-#   --data-binary @"$FILE"
-          </pre>
-
-          <h4 style="margin-top:12px">דוגמה להתקנת כלים (Debian/Ubuntu, apt)</h4>
-          <pre style="white-space:pre-wrap; direction:ltr">
-sudo apt-get update
-sudo apt-get install -y curl jq
-
-# העלאה לאחר ההתקנה:
-HOST="http://127.0.0.1:5000"
-TOKEN="{{ s.api_token }}"
-FILE="/path/to/firmware.ino.bin"
-curl -X POST "$HOST/api/upload_firmware" \
-  -H "Authorization: Bearer $TOKEN" \
-  -F "file=@${FILE}"
-          </pre>
-        {% endif %}
-      </div>
-    {% endif %}
   </form>
 
+  <!-- API card is ALWAYS visible -->
+  <div class="card" style="margin-top:12px">
+    <h3>API Firmware Upload</h3>
+
+    {% if not s.api_upload_enabled %}
+      <div class="warn">⚠️ ה־API כבוי כרגע. אפשר ליצור ולראות טוקן, אך קריאות ל־/api/upload_firmware ייכשלו עד שתפעיל.</div>
+    {% endif %}
+
+    {% if s.api_token %}
+      <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:6px">
+        <label for="apiTokenField" style="min-width:90px"><b>Token:</b></label>
+        <input id="apiTokenField" type="password" value="{{ s.api_token }}" readonly style="flex:1; min-width:260px">
+        <button type="button" class="btn" id="copyBtn" data-token="{{ s.api_token }}" onclick="copyToken()">העתק</button>
+        <button type="button" id="revealBtn" class="btn" onclick="toggleToken()">הצג</button>
+      </div>
+
+      <div class="hint">שמור את הטוקן בסוד. ניתן לחדש בכל רגע בעזרת הכפתור למעלה.</div>
+
+      <h4 style="margin-top:12px">דוגמת פקודה (bash)</h4>
+      <pre id="bashExample" style="white-space:pre-wrap; direction:ltr">
+# --- variables you can adjust ---
+HOST="http://127.0.0.1:5000"
+TOKEN="<span id='tokenMasked'>**************************************</span><span id='tokenReal' style="display:none">{{ s.api_token }}</span>"
+FILE="/path/to/firmware.ino.bin"
+
+curl -X POST "$HOST/api/upload_firmware" \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "file=@${FILE}"
+      </pre>
+    {% else %}
+      <div class="warn">אין טוקן פעיל. לחץ על "צור/חדש טוקן API".</div>
+    {% endif %}
+  </div>
+
   <script>
-    function copyToken() {
-      const el = document.getElementById('apiTokenField');
-      const val = el.value || '';
-      if (!val) return;
-      navigator.clipboard.writeText(val).then(() => {
-        // quick visual feedback (non-intrusive)
-        const old = el.style.outline;
-        el.style.outline = '2px solid #4caf50';
-        setTimeout(() => { el.style.outline = old; }, 400);
+  // --- Auto-save (unchanged) ---
+  const _saveTimers = new Map();
+  function queueSave(key, value, delay=400) {
+    if (_saveTimers.has(key)) clearTimeout(_saveTimers.get(key));
+    _saveTimers.set(key, setTimeout(() => doSave({[key]: value}), delay));
+  }
+  async function doSave(payload) {
+    try {
+      const res = await fetch("/settings/autosave", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify(payload)
       });
+      const ct = res.headers.get("content-type") || "";
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      if (ct.includes("application/json")) {
+        const js = await res.json();
+        // consider ok if HTTP 200 even if ok flag missing
+        if (!js || (js.ok !== true && js.success !== true)) { /* still OK */ }
+      }
+      showSavedToast();
+    } catch (e) {
+      console.error("autosave error:", e);
+      showSavedToast(false);
     }
-    function toggleToken() {
-      const el = document.getElementById('apiTokenField');
-      const btn = document.getElementById('revealBtn');
-      if (!el || !btn) return;
-      if (el.type === 'password') {
-        el.type = 'text';
-        btn.textContent = 'הסתר';
+  }
+  let _toastTimer = null;
+  function showSavedToast(ok=true) {
+    let el = document.getElementById("autosaveToast");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "autosaveToast";
+      el.style.position = "fixed";
+      el.style.bottom = "12px";
+      el.style.left = "12px";
+      el.style.padding = "8px 12px";
+      el.style.borderRadius = "10px";
+      el.style.boxShadow = "0 2px 8px rgba(0,0,0,0.15)";
+      el.style.fontSize = "14px";
+      el.style.zIndex = "9999";
+      document.body.appendChild(el);
+    }
+    el.textContent = ok ? "✅ נשמר" : "⚠️ שמירה נכשלה";
+    el.style.background = ok ? "#e8f5e9" : "#ffebee";
+    el.style.color = ok ? "#2e7d32" : "#c62828";
+    el.style.opacity = "1";
+    if (_toastTimer) clearTimeout(_toastTimer);
+    _toastTimer = setTimeout(() => { el.style.opacity = "0"; }, 1200);
+  }
+
+  // --- Token: copy + toggle (unchanged) ---
+  async function copyToken() {
+    const input   = document.getElementById('apiTokenField');
+    const copyBtn = document.getElementById('copyBtn');
+    const realSpan = document.getElementById('tokenReal');
+    let token = '';
+
+    if (input) {
+      const prevType = input.type;
+      if (prevType === 'password') input.type = 'text';
+      token = input.value || '';
+      if (prevType === 'password') input.type = prevType;
+    }
+    if (!token && realSpan) token = (realSpan.textContent || '').trim();
+    if (!token && copyBtn?.dataset?.token) token = copyBtn.dataset.token;
+
+    if (!token) return flashOutline(input, '#f44336');
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(token);
       } else {
-        el.type = 'password';
-        btn.textContent = 'הצג';
+        const ta = document.createElement('textarea');
+        ta.value = token;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        ta.remove();
+      }
+      flashOutline(input, '#4caf50');
+    } catch {
+      flashOutline(input, '#f44336');
+    }
+  }
+
+  function flashOutline(el, color) {
+    if (!el) return;
+    const old = el.style.outline;
+    el.style.outline = `2px solid ${color}`;
+    setTimeout(() => { el.style.outline = old; }, 450);
+  }
+
+  function toggleToken() {
+    const el  = document.getElementById('apiTokenField');
+    const btn = document.getElementById('revealBtn');
+    const masked = document.getElementById('tokenMasked');
+    const real   = document.getElementById('tokenReal');
+    if (!el || !btn) return;
+
+    if (el.type === 'password') {
+      el.type = 'text';
+      btn.textContent = 'הסתר';
+      if (masked && real) {
+        masked.style.display = 'none';
+        real.style.display   = 'inline';
+      }
+    } else {
+      el.type = 'password';
+      btn.textContent = 'הצג';
+      if (masked && real) {
+        masked.style.display = 'inline';
+        real.style.display   = 'none';
       }
     }
+  }
+
+  // --- NEW: Generate/Renew token via fetch then reload ---
+  async function generateToken() {
+    try {
+      const fd = new FormData();
+      fd.append("action", "generate_api_token");
+      const res = await fetch("/settings", { method: "POST", body: fd });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      // the backend re-renders the page with the new token; easiest is to reload
+      location.reload();
+    } catch (e) {
+      console.error("token generation failed:", e);
+      showSavedToast(false);
+    }
+  }
   </script>
 {% endblock %}
