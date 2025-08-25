@@ -773,7 +773,7 @@ def healthz():
 
 # -------- Run --------
 if __name__ == "__main__":
-    print (version, branch, ip)
+    print (version, branch, IP)
     s = load_settings()
     latest = find_latest_firmware(s["firmware_dir"])
     if latest:
