@@ -30,6 +30,7 @@ EVENTS_LOG_TXT = os.path.join(DATA_DIR, "events.log")    # text log
 
 version = os.getenv('VERSION', 'N/A')
 branch = os.getenv('BRANCH','N/A')
+ip = os.getenv('ip','N/A')
 
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(FIRMWARE_DIR, exist_ok=True)
@@ -666,7 +667,7 @@ def settings_page():
         flash("ההגדרות נשמרו")
         return redirect(url_for("settings_page"))
 
-    return render_template("settings.html", title="Settings", s=s, fw_files=fw_files, datetime=datetime)
+    return render_template("settings.html", title="Settings", s=s, fw_files=fw_files, ip=ip, datetime=datetime)
 
 
 # -------- OTA endpoint for ESP device --------
@@ -766,7 +767,7 @@ def healthz():
 
 # -------- Run --------
 if __name__ == "__main__":
-    print (version, branch)
+    print (version, branch, ip)
     s = load_settings()
     latest = find_latest_firmware(s["firmware_dir"])
     if latest:

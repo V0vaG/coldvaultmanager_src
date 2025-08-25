@@ -9,6 +9,9 @@ ENV B_NUM=$B_NUM
 ARG BRANCH
 ENV BRANCH=$BRANCH
 
+ARG IP
+ENV IP=$IP
+
 WORKDIR ~/
 
 COPY ./requirements.txt .
