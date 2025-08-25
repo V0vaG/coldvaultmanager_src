@@ -45,26 +45,31 @@
 
     <div style="margin:8px 0">
       <button class="btn btn-primary" type="submit">שמור</button>
-      <!-- secondary action to generate token -->
       <button class="btn" type="submit" name="action" value="generate_api_token">צור/חדש טוקן API</button>
     </div>
 
     {% if s.api_upload_enabled %}
       <div class="card" style="margin-top:12px">
         <h3>API Firmware Upload</h3>
+
         {% if s.api_token %}
-          <div><b>Token:</b> <code>{{ s.api_token }}</code></div>
-          <div class="hint">שמור את הטוקן בסוד. אפשר לחדש בכל רגע.</div>
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:6px">
+            <label for="apiTokenField" style="min-width:90px"><b>Token:</b></label>
+            <input id="apiTokenField" type="password" value="{{ s.api_token }}" readonly style="flex:1; min-width:260px">
+            <button type="button" class="btn" onclick="copyToken()">העתק</button>
+            <button type="button" id="revealBtn" class="btn" onclick="toggleToken()">הצג</button>
+          </div>
+          <div class="hint">שמור את הטוקן בסוד. ניתן לחדש בכל רגע בעזרת הכפתור למעלה.</div>
         {% else %}
           <div class="warn">אין טוקן פעיל. לחץ על "צור/חדש טוקן API".</div>
         {% endif %}
 
         {% if s.api_token %}
-          <h4 style="margin-top:10px">דוגמת פקודה (bash)</h4>
+          <h4 style="margin-top:12px">דוגמת פקודה (bash)</h4>
           <pre style="white-space:pre-wrap; direction:ltr">
 # --- variables you can adjust ---
 HOST="http://127.0.0.1:5000"
-TOKEN="{{ s.api_token }}"
+TOKEN="{{ s.api_token }}"   # לחץ "העתק" למעלה והדבק כאן אם תרצה
 FILE="/path/to/firmware.ino.bin"
 
 # multipart/form-data upload:
@@ -77,8 +82,48 @@ curl -X POST "$HOST/api/upload_firmware" \
 #   -H "Authorization: Bearer $TOKEN" \
 #   --data-binary @"$FILE"
           </pre>
+
+          <h4 style="margin-top:12px">דוגמה להתקנת כלים (Debian/Ubuntu, apt)</h4>
+          <pre style="white-space:pre-wrap; direction:ltr">
+sudo apt-get update
+sudo apt-get install -y curl jq
+
+# העלאה לאחר ההתקנה:
+HOST="http://127.0.0.1:5000"
+TOKEN="{{ s.api_token }}"
+FILE="/path/to/firmware.ino.bin"
+curl -X POST "$HOST/api/upload_firmware" \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "file=@${FILE}"
+          </pre>
         {% endif %}
       </div>
     {% endif %}
   </form>
+
+  <script>
+    function copyToken() {
+      const el = document.getElementById('apiTokenField');
+      const val = el.value || '';
+      if (!val) return;
+      navigator.clipboard.writeText(val).then(() => {
+        // quick visual feedback (non-intrusive)
+        const old = el.style.outline;
+        el.style.outline = '2px solid #4caf50';
+        setTimeout(() => { el.style.outline = old; }, 400);
+      });
+    }
+    function toggleToken() {
+      const el = document.getElementById('apiTokenField');
+      const btn = document.getElementById('revealBtn');
+      if (!el || !btn) return;
+      if (el.type === 'password') {
+        el.type = 'text';
+        btn.textContent = 'הסתר';
+      } else {
+        el.type = 'password';
+        btn.textContent = 'הצג';
+      }
+    }
+  </script>
 {% endblock %}
